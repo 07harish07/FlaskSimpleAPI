@@ -1,6 +1,10 @@
-from flask import Flask, Response, request
+from flask import Flask, Response, request, jsonify
 from flask_pymongo import PyMongo
+from flask_jwt_extended import JWTManager, jwt_required, create_access_token
+from passlib.hash import sha256_crypt
+from werkzeug.security import generate_password_hash, check_password_hash
 import pymongo
+import bcrypt
 from bson.objectid import ObjectId
 import json
 
@@ -8,6 +12,10 @@ app = Flask(__name__)
 
 app.config["MONGO_URI"] = "mongodb://localhost:27017/company"
 mongo = PyMongo(app)
+
+jwt = JWTManager(app)
+
+app.config["JWT_SECRET_KEY"] = "Dev-Harish-secret-key"
 
 # try:
 #     mongo = pymongo.MongoClient(
@@ -20,8 +28,42 @@ mongo = PyMongo(app)
 # except:
 #     print("ERROR - Cannot connect to db")
 
+@app.route("/register", methods=["POST"])
+def register():
+    email = request.form["email"]
+    # test = User.query.filter_by(email=email).first()
+    test = mongo.db.authuser.find_one({"email": email})
+    if test:
+        return jsonify(message="User Already Exist"), 409
+    else:
+        first_name = request.form["first_name"]
+        last_name = request.form["last_name"]
+        # password = request.form["password"]
+        password = bcrypt.hashpw(request.form['password'].encode('utf-8'), bcrypt.gensalt())
+        user_info = dict(first_name=first_name, last_name=last_name, email=email, password=password)
+        # user_info = dict(first_name=first_name, last_name=last_name, email=email, password=generate_password_hash(password))
+        mongo.db.authuser.insert_one(user_info)
+        return jsonify(message="User added sucessfully"), 201
 
-@app.route("/users", methods=["POST"])
+@app.route("/login", methods=["POST"])
+def login():
+    if request.is_json:
+        email = request.json["email"]
+        password = request.json['password'].encode('utf-8')
+    else:
+        email = request.form["email"]
+        password = request.form['password'].encode('utf-8')
+
+    login_user = mongo.db.authuser.find_one({"email": email})
+    if login_user:
+        if bcrypt.hashpw(password, login_user['password']) == login_user['password']:
+            access_token = create_access_token(identity=email)
+            return jsonify(message="Login Succeeded!", access_token=access_token), 201
+    else:
+        return jsonify(message="Bad Email or Password"), 401
+
+@app.route("/users/create", methods=["POST"])
+@jwt_required
 def create_user():
     try:
         if request.method == "POST":
@@ -42,6 +84,7 @@ def create_user():
 
 
 @app.route("/users/list", methods=["GET"])
+@jwt_required
 def users_list():
     try:
         data = list(mongo.db.users.find())
@@ -62,6 +105,7 @@ def users_list():
 
 
 @app.route("/users/<id>", methods=["GET"])
+@jwt_required
 def user(id):
     try:
         data = list(mongo.db.users.find({"_id":ObjectId(id)}))
@@ -83,6 +127,7 @@ def user(id):
 
 
 @app.route("/users/update/<id>", methods=["PUT"])
+@jwt_required
 def user_update(id):
     try:
         if request.method == "PUT":
@@ -115,6 +160,7 @@ def user_update(id):
 
 
 @app.route("/users/delete/<id>", methods=["DELETE"])
+@jwt_required
 def user_delete(id):
     try:
         if request.method == "DELETE":
